@@ -1,0 +1,232 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "virtualNetworkName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the virtual Network"
+            }
+        },
+        "virtualNetworkResourceGroup": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Resource Group of the virtual Network"
+            }
+        },
+        "subnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the subnet where the VM's need to be connected"
+            }
+        },
+        "availabilitySetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Availability Set of the VMs"
+            }
+        },
+        "virtualMachines": {
+            "type": "array",
+            "metadata": {
+                "description": "Array, containing a list of all VM's to deploy"
+            }
+        },
+        "localAdminUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Local admin user"
+            }
+        },
+        "localAdminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Local admin password"
+            }
+        },
+        "sqlAdminUsername": {
+            "type": "string"
+        },
+        "sqlAdminPassword": {
+            "type": "securestring"
+        }
+    },
+    "variables": {
+        "storageAccountName": "vmdiagstorage001",
+        "storageAccountResourceGroupName": "vm-diag-storage-rg",
+        "diagnosticsID": "[resourceId(variables('storageAccountResourceGroupName'), 'Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+        "vnetID": "[resourceId(parameters('virtualNetworkResourceGroup'), 'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+        "subnetRef": "[concat(variables('vnetID'),'/subnets/', parameters('subnetName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Compute/availabilitySets",
+            "name": "[parameters('availabilitySetName')]",
+            "apiVersion": "2017-12-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "platformFaultDomainCount": 2,
+                "platformUpdateDomainCount": 5
+            },
+            "sku": {
+                "name": "Aligned"
+            }
+        },
+        {
+            "apiVersion": "2016-03-30",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[concat(parameters('virtualMachines')[copyIndex()].name, '-nic')]",
+            "location": "[resourceGroup().location]",
+            "copy": {
+                "name": "nicCopy",
+                "count": "[length(parameters('virtualMachines'))]"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2018-06-01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[parameters('virtualMachines')[copyIndex()].name]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Compute/availabilitySets/', parameters('availabilitySetName'))]",
+                "nicCopy"
+            ],
+            "copy": {
+                "name": "vmCopy",
+                "count": "[length(parameters('virtualMachines'))]"
+            },
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('virtualMachines')[copyIndex()].vmSize]"
+                },
+                "licenseType": "Windows_Server",
+                "osProfile": {
+                    "computerName": "[parameters('virtualMachines')[copyIndex()].name]",
+                    "adminUsername": "[parameters('localAdminUsername')]",
+                    "adminPassword": "[parameters('localAdminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVmAgent": "true"
+                    }
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "MicrosoftSQLserver",
+                        "offer": "SQL2014SP2-WS2012R2",
+                        "sku": "standard",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "FromImage",
+                        "name": "[concat(parameters('virtualMachines')[copyIndex()].name, '-os')]",
+                        "diskSizeGB": "[parameters('virtualMachines')[copyIndex()].osDiskSize]",
+                        "managedDisk": {
+                            "storageAccountType": "[parameters('virtualMachines')[copyIndex()].osDiskSku]"
+                        }
+                    },
+                    "copy": [
+                        {
+                            "Name": "dataDisks",
+                            "count": "[length(parameters('virtualMachines')[copyIndex()].dataDisks)]",
+                            "input": {
+                                "name": "[concat(parameters('virtualMachines')[copyIndex()].name,'-data', copyIndex('dataDisks'))]",
+                                "diskSizeGB": "[parameters('virtualMachines')[copyIndex()].dataDisks[copyIndex('dataDisks')].size]",
+                                "createOption": "Empty",
+                                "caching": "ReadOnly",
+                                "lun": "[copyIndex('dataDisks')]",
+                                "managedDisk": {
+                                    "storageAccountType": "[parameters('virtualMachines')[copyIndex()].dataDisks[copyIndex('dataDisks')].sku]"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', concat(parameters('virtualMachines')[copyIndex()].name, '-nic'))]"
+                        }
+                    ]
+                },
+                "availabilitySet": {
+                    "id": "[resourceId('Microsoft.Compute/availabilitySets',parameters('availabilitySetName'))]"
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[reference(variables('diagnosticsID'),'2018-07-01').primaryEndpoints.blob]"
+                    }
+                }
+            }
+        },
+        {
+            "apiVersion": "2015-06-15",
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "[concat(parameters('virtualMachines')[copyIndex()].name, '/SqlIaasExtension')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "vmCopy"
+            ],
+            "copy": {
+                "name": "extensionCopy",
+                "count": "[length(parameters('virtualMachines'))]"
+            },
+            "properties": {
+                "type": "SqlIaaSAgent",
+                "publisher": "Microsoft.SqlServer.Management",
+                "typeHandlerVersion": "2.0",
+                "autoUpgradeMinorVersion": "true",
+                "settings": {
+                    "AutoTelemetrySettings": {
+                        "Region": "[resourceGroup().location]"
+                    },
+                    "AutoPatchingSettings": {
+                        "PatchCategory": "WindowsMandatoryUpdates",
+                        "Enable": false,
+                        "DayOfWeek": "Sunday",
+                        "MaintenanceWindowStartingHour": "2",
+                        "MaintenanceWindowDuration": "60"
+                    },
+                    "KeyVaultCredentialSettings": {
+                        "Enable": false,
+                        "CredentialName": ""
+                    },
+                    "ServerConfigurationsManagementSettings": {
+                        "SQLConnectivityUpdateSettings": {
+                            "ConnectivityType": "Private",
+                            "Port": "1433"
+                        },
+                        "SQLWorkloadTypeUpdateSettings": {
+                            "SQLWorkloadType": "GENERAL"
+                        },
+                        "SQLStorageUpdateSettings": {
+                            "DiskCount": "1",
+                            "NumberOfColumns": "1",
+                            "StartingDeviceID": "2",
+                            "DiskConfigurationType": "NEW"
+                        },
+                        "AdditionalFeaturesServerConfigurations": {
+                            "IsRServicesEnabled": false
+                        }
+                    }
+                },
+                "protectedSettings": {
+                    "SQLAuthUpdateUserName": "[parameters('sqlAdminUsername')]",
+                    "SQLAuthUpdatePassword": "[parameters('sqlAdminPassword')]"
+                }
+            }
+        }
+    ]
+}

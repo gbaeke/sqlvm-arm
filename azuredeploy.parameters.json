@@ -1,0 +1,40 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "virtualNetworkName": {
+            "value": "vm-network"
+        },
+        "virtualNetworkResourceGroup": {
+            "value": "vm-network-rg"
+        },
+        "subnetName": {
+            "value": "default"
+        },
+        "availabilitySetName": {
+            "value": "sqlvm-as"
+        },
+        "virtualMachines": {
+            "value": [
+                {
+                    "name": "sqlvm",
+                    "vmSize": "Standard_DS3_v2",
+                    "osDiskSize": "127",
+                    "osDiskSku": "Premium_LRS",
+                    "dataDisks": [
+                        {
+                        "Sku": "Premium_LRS",
+                        "Size": "512"
+                        }
+                    ]                    
+                }
+            ]
+        },
+        "localAdminUsername": {
+            "value": "username"
+        },
+        "sqlAdminUsername": {
+            "value": "username"
+        }
+    }
+}
